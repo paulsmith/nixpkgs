@@ -5619,7 +5619,7 @@ with pkgs;
 
   gexiv2 = callPackage ../development/libraries/gexiv2 { };
 
-  gftp = callPackage ../applications/networking/gftp {
+  gftp = callPackage ../applications/networking/ftp/gftp {
     gtk = gtk2;
   };
 
@@ -13577,6 +13577,8 @@ with pkgs;
   mujs = callPackage ../development/interpreters/mujs { };
 
   ngn-k = callPackage ../development/interpreters/ngn-k { };
+
+  obb = callPackage ../development/interpreters/clojure/obb.nix { };
 
   octave = callPackage ../development/interpreters/octave {
     python = python3;
@@ -26448,6 +26450,8 @@ with pkgs;
 
   jackmix = libsForQt5.callPackage ../applications/audio/jackmix { };
   jackmix_jack1 = jackmix.override { jack = jack1; };
+
+  jaeles = callPackage ../tools/security/jaeles { };
 
   jalv = callPackage ../applications/audio/jalv { };
 
