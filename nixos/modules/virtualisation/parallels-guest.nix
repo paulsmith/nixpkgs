@@ -46,29 +46,6 @@ in
   };
 
   config = mkIf config.hardware.parallels.enable {
-    services.xserver = {
-      videoDrivers = [ "prlvideo" ];
-
-      modules = [ prl-tools ];
-
-      config = ''
-        Section "InputClass"
-          Identifier      "prlmouse"
-          MatchIsPointer  "on"
-          MatchTag        "prlmouse"
-          Driver          "prlmouse"
-        EndSection
-      '';
-
-      screenSection = ''
-        Option "NoMTRR"
-      '';
-    };
-
-    hardware.opengl.package = prl-tools;
-    hardware.opengl.package32 = pkgs.pkgsi686Linux.linuxPackages.prl-tools.override { libsOnly = true; kernel = null; };
-    hardware.opengl.extraPackages = [ pkgs.mesa.drivers ];
-    hardware.opengl.extraPackages32 = [ pkg.pkgsi686Linux.mesa.drivers ];
 
     services.udev.packages = [ prl-tools ];
 
@@ -76,13 +53,14 @@ in
 
     boot.extraModulePackages = [ prl-tools ];
 
-    boot.kernelModules = if aarch64 then [ "prl_fs" "prl_fs_freeze" "prl_notifier" "prl_tg" ] else [ "prl_fs" "prl_fs_freeze" "prl_tg" ];
+    boot.kernelModules = [ "prl_fs" "prl_fs_freeze" "prl_tg" ] ++ optional aarch64 "prl_notifier";
 
     services.timesyncd.enable = false;
 
     systemd.services.prltoolsd = {
-      description = "Parallels Tools' service";
+      description = "Parallels Tools Service";
       wantedBy = [ "multi-user.target" ];
+      path = [ pkgs.gawk prl-tools ];
       serviceConfig = {
         ExecStart = "${prl-tools}/bin/prltoolsd -f";
         PIDFile = "/var/run/prltoolsd.pid";
@@ -90,8 +68,9 @@ in
     };
 
     systemd.services.prlfsmountd = mkIf config.hardware.parallels.autoMountShares {
-      description = "Parallels Shared Folders Daemon";
+      description = "Parallels Guest File System Sharing Tool";
       wantedBy = [ "multi-user.target" ];
+      path = [ prl-tools ];
       serviceConfig = rec {
         ExecStart = "${prl-tools}/sbin/prlfsmountd ${PIDFile}";
         ExecStartPre = "${pkgs.coreutils}/bin/mkdir -p /media";
@@ -101,9 +80,10 @@ in
     };
 
     systemd.services.prlshprint = {
-      description = "Parallels Shared Printer Tool";
+      description = "Parallels Printing Tool";
       wantedBy = [ "multi-user.target" ];
       bindsTo = [ "cups.service" ];
+      path = [ prl-tools ];
       serviceConfig = {
         Type = "forking";
         ExecStart = "${prl-tools}/bin/prlshprint";
@@ -114,27 +94,32 @@ in
       prlcc = {
         description = "Parallels Control Center";
         wantedBy = [ "graphical-session.target" ];
+        path = [ prl-tools ];
         serviceConfig = {
           ExecStart = "${prl-tools}/bin/prlcc";
         };
       };
       prldnd = {
-        description = "Parallels Control Center";
+        description = "Parallels Drag And Drop Tool";
         wantedBy = [ "graphical-session.target" ];
+        path = [ prl-tools ];
         serviceConfig = {
           ExecStart = "${prl-tools}/bin/prldnd";
         };
       };
       prlcp = {
-        description = "Parallels CopyPaste Tool";
+        description = "Parallels Copy Paste Tool";
         wantedBy = [ "graphical-session.target" ];
+        path = [ prl-tools ];
         serviceConfig = {
           ExecStart = "${prl-tools}/bin/prlcp";
+          Restart = "always";
         };
       };
       prlsga = {
         description = "Parallels Shared Guest Applications Tool";
         wantedBy = [ "graphical-session.target" ];
+        path = [ prl-tools ];
         serviceConfig = {
           ExecStart = "${prl-tools}/bin/prlsga";
         };
@@ -142,6 +127,7 @@ in
       prlshprof = {
         description = "Parallels Shared Profile Tool";
         wantedBy = [ "graphical-session.target" ];
+        path = [ prl-tools ];
         serviceConfig = {
           ExecStart = "${prl-tools}/bin/prlshprof";
         };

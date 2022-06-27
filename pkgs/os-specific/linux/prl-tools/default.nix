@@ -1,5 +1,5 @@
 { stdenv, lib, makeWrapper, p7zip
-, gawk, util-linux, xorg, glib, dbus-glib, zlib
+, gawk, util-linux, xorg, glib, dbus-glib, zlib, bbe
 , kernel ? null, libsOnly ? false
 , fetchurl, undmg, perl, autoPatchelfHook
 }:
@@ -14,7 +14,7 @@ let
       else throw "Parallels Tools for Linux only supports {aarch64,x86_64,i686}-linux targets";
 in
 stdenv.mkDerivation rec {
-  version = "${prl_major}.1.1-51537";
+  version = "${prl_major}.1.4-51567";
   prl_major = "17";
   pname = "prl-tools";
 
@@ -22,15 +22,15 @@ stdenv.mkDerivation rec {
   # => ${dmg}/Parallels\ Desktop.app/Contents/Resources/Tools/prl-tools-lin.iso
   src = fetchurl {
     url =  "https://download.parallels.com/desktop/v${prl_major}/${version}/ParallelsDesktop-${version}.dmg";
-    sha256 = "1ab5jwbg3jgvfwx8kwxwhhrsdp9wz4g9q7fg4z0hhd8v9pgy4yxx";
+    sha256 = "sha256-gjLxQOTFuVghv1Bj+zfbNW97q1IN2rurSnPQi13gzRA=";
   };
 
   hardeningDisable = [ "pic" "format" ];
 
-  nativeBuildInputs = [ p7zip undmg perl autoPatchelfHook ]
+  nativeBuildInputs = [ p7zip undmg perl bbe autoPatchelfHook ]
     ++ lib.optionals (!libsOnly) [ makeWrapper ] ++ kernel.moduleBuildDependencies;
 
-  buildInputs = with xorg; [ stdenv.cc.cc libXrandr libXext libX11 libXcomposite libXinerama ]
+  buildInputs = with xorg; [ libXrandr libXext libX11 libXcomposite libXinerama ]
     ++ lib.optionals (!libsOnly) [ libXi glib dbus-glib zlib ];
 
   runtimeDependencies = [ glib xorg.libXrandr ];
@@ -39,18 +39,17 @@ stdenv.mkDerivation rec {
 
   unpackPhase = ''
     undmg "${src}"
-
     export sourceRoot=prl-tools-build
-    7z x "Parallels Desktop.app/Contents/Resources/Tools/prl-tools-lin${if aarch64 then "-arm" else ""}.iso" -o$sourceRoot
+    7z x "Parallels Desktop.app/Contents/Resources/Tools/prl-tools-lin${lib.optionalString stdenv.isAarch64 "-arm"}.iso" -o$sourceRoot
     if test -z "$libsOnly"; then
       ( cd $sourceRoot/kmods; tar -xaf prl_mod.tar.gz )
     fi
-    # TODO
   '';
-    #( cd $sourceRoot/tools; tar -xaf prltools${if x64 then ".x64" else ""}.tar.gz )
 
-  kernelVersion = if libsOnly then "" else lib.getVersion kernel.name;
-  kernelDir = if libsOnly then "" else "${kernel.dev}/lib/modules/${kernelVersion}";
+  patches = lib.optionals (lib.versionAtLeast kernel.version "5.18") [ ./prl-tools.patch ];
+
+  kernelVersion = lib.optionalString (!libsOnly) kernel.modDirVersion;
+  kernelDir = lib.optionalString (!libsOnly) "${kernel.dev}/lib/modules/${kernelVersion}";
   scriptPath = lib.concatStringsSep ":" (lib.optionals (!libsOnly) [ "${util-linux}/bin" "${gawk}/bin" ]);
 
   buildPhase = ''
@@ -74,28 +73,38 @@ stdenv.mkDerivation rec {
         mkdir -p $out/lib/modules/${kernelVersion}/extra
         cp prl_fs/SharedFolders/Guest/Linux/prl_fs/prl_fs.ko $out/lib/modules/${kernelVersion}/extra
         cp prl_fs_freeze/Snapshot/Guest/Linux/prl_freeze/prl_fs_freeze.ko $out/lib/modules/${kernelVersion}/extra
-        ${if aarch64 then "cp prl_notifier/Installation/lnx/prl_notifier/prl_notifier.ko $out/lib/modules/${kernelVersion}/extra" else ""}
         cp prl_tg/Toolgate/Guest/Linux/prl_tg/prl_tg.ko $out/lib/modules/${kernelVersion}/extra
+        ${lib.optionalString stdenv.isAarch64
+        "cp prl_notifier/Installation/lnx/prl_notifier/prl_notifier.ko $out/lib/modules/${kernelVersion}/extra"}
       )
     fi
 
     ( # tools
-      cd tools/tools${if aarch64 then "-arm64" else if x86_64 then "64" else "32"}
+      cd tools/tools${if stdenv.isAarch64 then "-arm64" else if stdenv.isx86_64 then "64" else "32"}
       mkdir -p $out/lib
 
       if test -z "$libsOnly"; then
         # install binaries
         for i in bin/* sbin/prl_nettool sbin/prl_snapshot; do
+          # also patch binaries to replace /usr/bin/XXX to XXX
+          # we're lucky here that all this patch are used inside hardocoded shell scripts
+          # => it allows to use space as padding
+          for p in bin/* sbin/prl_nettool sbin/prl_snapshot sbin/prlfsmountd; do
+            p=$(basename $p)
+            bbe -e "s:/usr/bin/$p:$p         :" -o $i.tmp $i
+            bbe -e "s:/usr/sbin/$p:$p          :" -o $i $i.tmp
+          done
+
           install -Dm755 $i $out/$i
         done
 
-        mkdir -p $out/bin
         install -Dm755 ../../tools/prlfsmountd.sh $out/sbin/prlfsmountd
         wrapProgram $out/sbin/prlfsmountd \
           --prefix PATH ':' "$scriptPath"
 
-        for i in lib/*.0.0; do
+        for i in lib/libPrl*.0.0; do
           cp $i $out/lib
+          ln -s $out/$i $out/''${i%.0.0}
         done
 
         mkdir -p $out/share/man/man8
@@ -104,16 +113,6 @@ stdenv.mkDerivation rec {
         mkdir -p $out/etc/pm/sleep.d
         install -Dm644 ../99prltoolsd-hibernate $out/etc/pm/sleep.d
       fi
-
-      cd $out/lib
-      ln -s libPrlWl.so.1.0.0 libPrlWl.so.1
-      ${if aarch64 then "" else "
-      ln -s libGL.so.1.0.0 libGL.so
-      ln -s libGL.so.1.0.0 libGL.so.1
-      ln -s libPrlDRI.so.1.0.0 libPrlDRI.so.1
-      ln -s libEGL.so.1.0.0 libEGL.so.1
-      ln -s libgbm.so.1.0.0 libgbm.so.1
-      "}
     )
   '';
 
