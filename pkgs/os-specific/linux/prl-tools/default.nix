@@ -1,5 +1,5 @@
 { stdenv, lib, makeWrapper, p7zip
-, gawk, util-linux, xorg, glib, dbus-glib, zlib
+, gawk, util-linux, xorg, glib, dbus-glib, zlib, bbe
 , kernel ? null, libsOnly ? false
 , fetchurl, undmg, perl, autoPatchelfHook
 }:
@@ -27,7 +27,7 @@ stdenv.mkDerivation rec {
 
   hardeningDisable = [ "pic" "format" ];
 
-  nativeBuildInputs = [ p7zip undmg perl autoPatchelfHook ]
+  nativeBuildInputs = [ p7zip undmg perl bbe autoPatchelfHook ]
     ++ lib.optionals (!libsOnly) [ makeWrapper ] ++ kernel.moduleBuildDependencies;
 
   buildInputs = with xorg; [ libXrandr libXext libX11 libXcomposite libXinerama ]
@@ -86,10 +86,18 @@ stdenv.mkDerivation rec {
       if test -z "$libsOnly"; then
         # install binaries
         for i in bin/* sbin/prl_nettool sbin/prl_snapshot; do
+          # also patch binaries to replace /usr/bin/XXX to XXX
+          # we're lucky here that all this patch are used inside hardocoded shell scripts
+          # => it allows to use space as padding
+          for p in bin/* sbin/prl_nettool sbin/prl_snapshot sbin/prlfsmountd; do
+            p=$(basename $p)
+            bbe -e "s:/usr/bin/$p:$p         :" -o $i.tmp $i
+            bbe -e "s:/usr/sbin/$p:$p          :" -o $i $i.tmp
+          done
+
           install -Dm755 $i $out/$i
         done
 
-        mkdir -p $out/bin
         install -Dm755 ../../tools/prlfsmountd.sh $out/sbin/prlfsmountd
         wrapProgram $out/sbin/prlfsmountd \
           --prefix PATH ':' "$scriptPath"
