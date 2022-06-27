@@ -30,7 +30,7 @@ stdenv.mkDerivation rec {
   nativeBuildInputs = [ p7zip undmg perl autoPatchelfHook ]
     ++ lib.optionals (!libsOnly) [ makeWrapper ] ++ kernel.moduleBuildDependencies;
 
-  buildInputs = with xorg; [ stdenv.cc.cc libXrandr libXext libX11 libXcomposite libXinerama ]
+  buildInputs = with xorg; [ libXrandr libXext libX11 libXcomposite libXinerama ]
     ++ lib.optionals (!libsOnly) [ libXi glib dbus-glib zlib ];
 
   runtimeDependencies = [ glib xorg.libXrandr ];
@@ -39,18 +39,17 @@ stdenv.mkDerivation rec {
 
   unpackPhase = ''
     undmg "${src}"
-
     export sourceRoot=prl-tools-build
-    7z x "Parallels Desktop.app/Contents/Resources/Tools/prl-tools-lin${if aarch64 then "-arm" else ""}.iso" -o$sourceRoot
+    7z x "Parallels Desktop.app/Contents/Resources/Tools/prl-tools-lin${lib.optionalString stdenv.isAarch64 "-arm"}.iso" -o$sourceRoot
     if test -z "$libsOnly"; then
       ( cd $sourceRoot/kmods; tar -xaf prl_mod.tar.gz )
     fi
-    # TODO
   '';
-    #( cd $sourceRoot/tools; tar -xaf prltools${if x64 then ".x64" else ""}.tar.gz )
 
-  kernelVersion = if libsOnly then "" else lib.getVersion kernel.name;
-  kernelDir = if libsOnly then "" else "${kernel.dev}/lib/modules/${kernelVersion}";
+  patches = lib.optionals (lib.versionAtLeast kernel.version "5.18") [ ./prl-tools.patch ];
+
+  kernelVersion = lib.optionalString (!libsOnly) kernel.modDirVersion;
+  kernelDir = lib.optionalString (!libsOnly) "${kernel.dev}/lib/modules/${kernelVersion}";
   scriptPath = lib.concatStringsSep ":" (lib.optionals (!libsOnly) [ "${util-linux}/bin" "${gawk}/bin" ]);
 
   buildPhase = ''
@@ -74,13 +73,14 @@ stdenv.mkDerivation rec {
         mkdir -p $out/lib/modules/${kernelVersion}/extra
         cp prl_fs/SharedFolders/Guest/Linux/prl_fs/prl_fs.ko $out/lib/modules/${kernelVersion}/extra
         cp prl_fs_freeze/Snapshot/Guest/Linux/prl_freeze/prl_fs_freeze.ko $out/lib/modules/${kernelVersion}/extra
-        ${if aarch64 then "cp prl_notifier/Installation/lnx/prl_notifier/prl_notifier.ko $out/lib/modules/${kernelVersion}/extra" else ""}
         cp prl_tg/Toolgate/Guest/Linux/prl_tg/prl_tg.ko $out/lib/modules/${kernelVersion}/extra
+        ${lib.optionalString stdenv.isAarch64
+        "cp prl_notifier/Installation/lnx/prl_notifier/prl_notifier.ko $out/lib/modules/${kernelVersion}/extra"}
       )
     fi
 
     ( # tools
-      cd tools/tools${if aarch64 then "-arm64" else if x86_64 then "64" else "32"}
+      cd tools/tools${if stdenv.isAarch64 then "-arm64" else if stdenv.isx86_64 then "64" else "32"}
       mkdir -p $out/lib
 
       if test -z "$libsOnly"; then
@@ -94,8 +94,9 @@ stdenv.mkDerivation rec {
         wrapProgram $out/sbin/prlfsmountd \
           --prefix PATH ':' "$scriptPath"
 
-        for i in lib/*.0.0; do
+        for i in lib/libPrl*.0.0; do
           cp $i $out/lib
+          ln -s $out/$i $out/''${i%.0.0}
         done
 
         mkdir -p $out/share/man/man8
@@ -104,16 +105,6 @@ stdenv.mkDerivation rec {
         mkdir -p $out/etc/pm/sleep.d
         install -Dm644 ../99prltoolsd-hibernate $out/etc/pm/sleep.d
       fi
-
-      cd $out/lib
-      ln -s libPrlWl.so.1.0.0 libPrlWl.so.1
-      ${if aarch64 then "" else "
-      ln -s libGL.so.1.0.0 libGL.so
-      ln -s libGL.so.1.0.0 libGL.so.1
-      ln -s libPrlDRI.so.1.0.0 libPrlDRI.so.1
-      ln -s libEGL.so.1.0.0 libEGL.so.1
-      ln -s libgbm.so.1.0.0 libgbm.so.1
-      "}
     )
   '';
 
