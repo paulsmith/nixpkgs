@@ -60,6 +60,7 @@ in
     systemd.services.prltoolsd = {
       description = "Parallels Tools Service";
       wantedBy = [ "multi-user.target" ];
+      path = [ pkgs.gawk ];
       serviceConfig = {
         ExecStart = "${prl-tools}/bin/prltoolsd -f";
         PIDFile = "/var/run/prltoolsd.pid";
